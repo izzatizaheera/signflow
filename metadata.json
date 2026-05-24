@@ -1,0 +1,6 @@
+{
+  "name": "SignFlow",
+  "description": "An interactive, gamified BIM (Bahasa Isyarat Malaysia) learning and practice app for hearing individuals (allies) to communicate with the Deaf and Mute community.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
