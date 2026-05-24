@@ -1,20 +1,17 @@
-import { supabase, isSupabaseConfigured } from "./supabase";
 import { ToolkitPhrase } from "../types";
+import { 
+  supabase, 
+  isSupabaseConfigured, 
+  saveToSavedPhrases, 
+  getUserSavedPhrases, 
+  deleteFromSavedPhrases 
+} from "./supabase";
 
-// Fallback constant key
+// Local Storage Fallback Key
 const LOCAL_STORAGE_KEY = "bim_local_user_phrases";
 
-export interface UserPhraseDbRow {
-  id?: string;
-  user_id: string;
-  phrase: string;
-  translated_text: string; // Stored as a JSON block or clean readable string
-  category: string;
-  created_at?: string;
-}
-
 /**
- * Inserts a newly generated phrase into Supabase (user_phrases table)
+ * Inserts a newly generated phrase into Supabase (saved_phrases table)
  * and backs it up to local storage so it's globally interactive.
  */
 export async function saveUserPhrase(
@@ -34,14 +31,15 @@ export async function saveUserPhrase(
   userId?: string
 ): Promise<{ success: boolean; data?: ToolkitPhrase; feedback: string }> {
   
-  // Format info as beautiful explanatory text
+  // Create beautiful description guiding gestures
   const customDescription = `BIM GLOSS: ${translatedBimData.gloss}. | Movement Guide: ${translatedBimData.handshape}. | Facial Focus: ${translatedBimData.facialExpression}. | Tip: ${translatedBimData.linguisticTip} (${translatedBimData.gamifiedFeedback})`;
 
+  const localId = `user_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const newPhraseItem: ToolkitPhrase = {
-    id: `user_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    id: localId,
     phrase: phraseTitle,
     description: customDescription,
-    image: translatedBimData.imageUrl || "https://images.bimsignbank.org/vocab/A.webp", // Match correct default fallback
+    image: translatedBimData.imageUrl || "https://images.bimsignbank.org/vocab/A.webp",
     imageUrl: translatedBimData.imageUrl,
     youtubeUrl: translatedBimData.youtubeUrl,
     embedUrl: translatedBimData.embedUrl,
@@ -50,7 +48,7 @@ export async function saveUserPhrase(
     isNew: true
   };
 
-  // 1. Back up to Local Storage regardless of status
+  // 1. Back up to Local Storage regardless of auth status
   try {
     const existing = localStorage.getItem(LOCAL_STORAGE_KEY);
     const array = existing ? JSON.parse(existing) : [];
@@ -60,45 +58,47 @@ export async function saveUserPhrase(
     console.error("Local storage sync error:", err);
   }
 
-  // 2. Query Supabase custom 'user_phrases' table if active
-  if (isSupabaseConfigured && supabase) {
+  // 2. Insert into Supabase 'saved_phrases' table if active user session is present
+  if (isSupabaseConfigured && supabase && userId) {
     try {
-      const activeUserId = userId || "anonymous_ally";
-      const { data, error } = await supabase
-        .from("user_phrases")
-        .insert({
-          user_id: activeUserId,
-          phrase: phraseTitle,
-          translated_text: JSON.stringify(translatedBimData),
-          category: category,
-          created_at: new Date().toISOString()
-        })
-        .select();
+      // Serialize rich learning details so they fit into the specified (english_text, malay_text) columns
+      const serializedData = JSON.stringify({
+        gloss: translatedBimData.gloss,
+        handshape: translatedBimData.handshape,
+        facialExpression: translatedBimData.facialExpression,
+        linguisticTip: translatedBimData.linguisticTip,
+        gamifiedFeedback: translatedBimData.gamifiedFeedback,
+        imageUrl: translatedBimData.imageUrl,
+        youtubeUrl: translatedBimData.youtubeUrl,
+        embedUrl: translatedBimData.embedUrl,
+        sourceUrl: translatedBimData.sourceUrl,
+        category: category
+      });
 
-      if (error) {
-        console.warn("Supabase saving to 'user_phrases' table failed: ", error.message);
+      const savedRow = await saveToSavedPhrases(userId, phraseTitle, serializedData);
+
+      if (savedRow) {
         return {
-          success: true, // Mark success relative to local state fallback
+          success: true,
+          data: {
+            ...newPhraseItem,
+            id: savedRow.id // Use real DB generated row UUID
+          },
+          feedback: "🎉 Gesture card synced to Supabase database ('saved_phrases' table) and saved locally!"
+        };
+      } else {
+        return {
+          success: true,
           data: newPhraseItem,
-          feedback: `Saved locally! Note: Supabase inserts failed. Please verify that 'user_phrases' table exists. Error: ${error.message}`
+          feedback: "Saved locally! Note: Supabase insert returned null. Your 'saved_phrases' table may need migration."
         };
       }
-
-      const returnedId = data?.[0]?.id?.toString() || newPhraseItem.id;
-      return {
-        success: true,
-        data: {
-          ...newPhraseItem,
-          id: returnedId
-        },
-        feedback: "🎉 Phrase saved securely to Supabase database ('user_phrases' table) & synced with local study list!"
-      };
     } catch (e: any) {
-      console.warn("Exception inserting to Supabase:", e);
+      console.warn("Exception inserting to Supabase 'saved_phrases':", e);
       return {
         success: true,
         data: newPhraseItem,
-        feedback: `Saved locally! Supabase exception: ${e.message || e}`
+        feedback: `Saved locally! Supabase error: ${e.message || e}`
       };
     }
   }
@@ -106,87 +106,92 @@ export async function saveUserPhrase(
   return {
     success: true,
     data: newPhraseItem,
-    feedback: "🎉 Phrase translated successfully and stored in local Ally storage! (To save and backup on Supabase, configure your credentials in Settings!)"
+    feedback: "🎉 Phrase translated and stored in local practice storage!"
   };
 }
 
 /**
- * Load all user-generated phrases from local storage & Supabase
+ * Load all custom user phrases from local storage & Supabase
  */
 export async function getCombinedUserPhrases(userId?: string): Promise<ToolkitPhrase[]> {
-  const localPhrases: ToolkitPhrase[] = [];
+  const localList: ToolkitPhrase[] = [];
   
-  // 1. Fetch from local storage first
+  // 1. Fetch from local first
   try {
     const existing = localStorage.getItem(LOCAL_STORAGE_KEY);
     if (existing) {
-      localPhrases.push(...JSON.parse(existing));
+      localList.push(...JSON.parse(existing));
     }
   } catch (e) {
-    console.error("Error loading local custom phrases:", e);
+    console.error("Error loading local phrases:", e);
   }
 
-  // 2. Fetch and merge from Supabase 'user_phrases' if available
-  if (isSupabaseConfigured && supabase) {
+  // 2. Fetch and merge from Supabase 'saved_phrases' if user logs in
+  if (isSupabaseConfigured && supabase && userId) {
     try {
-      const activeUserId = userId || "anonymous_ally";
-      const { data, error } = await supabase
-        .from("user_phrases")
-        .select("*")
-        .eq("user_id", activeUserId);
-
-      if (!error && data && data.length > 0) {
-        const dbPhrases: ToolkitPhrase[] = data.map((item: any) => {
-          let parsedText = {
-            gloss: item.phrase.toUpperCase(),
-            handshape: "Standard hand wave contours",
-            facialExpression: "Warm attentive smile",
-            linguisticTip: "Practice transition frames slowly",
-            gamifiedFeedback: "+10 XP!"
+      const dbRows = await getUserSavedPhrases(userId);
+      if (dbRows && dbRows.length > 0) {
+        const dbPhrases: ToolkitPhrase[] = dbRows.map((row) => {
+          let parsedBim = {
+            gloss: row.english_text.toUpperCase(),
+            handshape: "Standard hand gestures",
+            facialExpression: "Warm supportive look",
+            linguisticTip: "Practice visual gestures gradually",
+            gamifiedFeedback: "+10 XP!",
+            imageUrl: undefined,
+            youtubeUrl: undefined,
+            embedUrl: undefined,
+            sourceUrl: undefined,
+            category: "Basic Conversation"
           };
 
           try {
-            if (item.translated_text) {
-              parsedText = typeof item.translated_text === "string" 
-                ? JSON.parse(item.translated_text) 
-                : item.translated_text;
+            if (row.malay_text && row.malay_text.startsWith("{")) {
+              parsedBim = JSON.parse(row.malay_text);
             }
           } catch {
-            // keep default fallback
+            // keep default
           }
 
-          const desc = `BIM GLOSS: ${parsedText.gloss}. | Movement Guide: ${parsedText.handshape}. | Facial Focus: ${parsedText.facialExpression}. | Tip: ${parsedText.linguisticTip} (${parsedText.gamifiedFeedback})`;
+          const desc = `BIM GLOSS: ${parsedBim.gloss}. | Movement Guide: ${parsedBim.handshape}. | Facial Focus: ${parsedBim.facialExpression}. | Tip: ${parsedBim.linguisticTip} (${parsedBim.gamifiedFeedback})`;
 
           return {
-            id: item.id?.toString(),
-            phrase: item.phrase,
+            id: row.id,
+            phrase: row.english_text,
             description: desc,
-            image: "/src/assets/images/asl_hands_practice_1779393673641.png",
-            category: item.category || "Basic Conversation",
+            image: parsedBim.imageUrl || "https://images.bimsignbank.org/vocab/A.webp",
+            imageUrl: parsedBim.imageUrl,
+            youtubeUrl: parsedBim.youtubeUrl,
+            embedUrl: parsedBim.embedUrl,
+            sourceUrl: parsedBim.sourceUrl,
+            category: parsedBim.category || "Basic Conversation",
             isNew: true
           };
         });
 
-        // Combine lists, making sure we don't duplicate identical phrases
-        const resultList = [...localPhrases];
+        // Unique union merge logic
+        const combined = [...localList];
         dbPhrases.forEach((dbItem) => {
-          const hasMatch = resultList.some((localItem) => 
-            localItem.phrase.toLowerCase() === dbItem.phrase.toLowerCase() &&
-            localItem.category === dbItem.category
+          const matchIndex = combined.findIndex((loc) => 
+            loc.phrase.toLowerCase() === dbItem.phrase.toLowerCase() &&
+            loc.category === dbItem.category
           );
-          if (!hasMatch) {
-            resultList.push(dbItem);
+          if (matchIndex === -1) {
+            combined.push(dbItem);
+          } else {
+            // Upgrade local ID to real DB uuid for seamless delete queries later
+            combined[matchIndex].id = dbItem.id;
           }
         });
 
-        return resultList;
+        return combined;
       }
-    } catch (e) {
-      console.warn("Could not query 'user_phrases' from Supabase:", e);
+    } catch (err) {
+      console.warn("Could not query 'saved_phrases' table:", err);
     }
   }
 
-  return localPhrases;
+  return localList;
 }
 
 /**
@@ -205,26 +210,20 @@ export async function deleteUserPhrase(id: string, userId?: string): Promise<{ s
     console.error("Local storage delete error:", err);
   }
 
-  // 2. Remove from Supabase if configured
-  if (isSupabaseConfigured && supabase) {
+  // 2. Remove from Supabase
+  if (isSupabaseConfigured && supabase && userId) {
     try {
-      const activeUserId = userId || "anonymous_ally";
-      const { error } = await supabase
-        .from("user_phrases")
-        .delete()
-        .eq("user_id", activeUserId)
-        .eq("id", id);
-
-      if (error) {
+      const ok = await deleteFromSavedPhrases(userId, id);
+      if (ok) {
         return {
           success: true,
-          feedback: `Removed locally! Note: Supabase delete failed: ${error.message}`
+          feedback: "🎉 Card successfully deleted from cloud database!"
         };
       }
     } catch (e: any) {
       return {
         success: true,
-        feedback: `Removed locally! Supabase error: ${e.message || e}`
+        feedback: `Deleted locally! Note: Supabase error: ${e.message || e}`
       };
     }
   }

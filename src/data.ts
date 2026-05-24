@@ -327,26 +327,26 @@ export const alphabetMedia: Record<string, { imageUrl: string; image: string; yo
 };
 
 export const INITIAL_TOPICS: TopicNode[] = [
-  { id: "1", title: "Unit 1: Alphabet", description: "Master BIM single and double-handed A–Z letter shapes and beginner finger spelling.", status: "active", pointsValue: 15 },
-  { id: "2", title: "Unit 2: Common Daily Words", description: "Learn BIM 'Hello', 'Thank You' (Terima Kasih), 'Please', 'Sorry', 'Friend', 'Family', 'Where', and 'Help'.", status: "active", pointsValue: 15 },
+  { id: "1", title: "Unit 1: Alphabet & Fingerspelling", description: "Master BIM single and double-handed A–Z letter shapes and beginner finger spelling.", status: "active", pointsValue: 15 },
+  { id: "2", title: "Unit 2: Common Daily Conversation", description: "Learn BIM 'Hello', 'Thank You' (Terima Kasih), 'Please', 'Sorry', 'Friend', 'Family', 'Where', and 'Help'.", status: "active", pointsValue: 15 },
   { id: "3", title: "Unit 3: Emergency Signs", description: "Express vital needs: 'Help', 'Hospital', 'Police', 'Danger', 'Emergency', 'Call', and 'Toilet' in BIM.", status: "active", pointsValue: 20 },
   { id: "4", title: "Unit 4: Food & Drink Ordering", description: "Dine out smoothly: 'Eat', 'Drink', 'Water', 'Rice', 'Chicken', 'Delicious', 'Bill', and 'Restaurant'.", status: "active", pointsValue: 20 },
-  { id: "5", title: "Unit 5: Professional Sign Language", description: "Office & school conversation: 'Meeting', 'Work', 'Teacher', 'Student', 'Computer', and 'cooperation'.", status: "active", pointsValue: 25 },
+  { id: "5", title: "Unit 5: Office & Work Terms", description: "Office context: 'Meeting', 'Work', 'Job', 'Company', 'Computer', and 'Salary'.", status: "active", pointsValue: 25 },
+  { id: "6", title: "Unit 6: Family & Home Life", description: "Connect with loved ones: signs for 'Mother', 'Father', 'Sibling', and 'Home'.", status: "active", pointsValue: 20 },
+  { id: "7", title: "Unit 7: Travel & Navigation", description: "Getting around: terms like 'Car', 'Train', 'Direction', and 'Destination'.", status: "active", pointsValue: 20 },
+  { id: "8", title: "Unit 8: Healthcare & Medical Care", description: "Express wellness and medical assistance: 'Doctor', 'Medicine', 'Pain', and 'Clinic'.", status: "active", pointsValue: 25 },
+  { id: "9", title: "Unit 9: Technology & Computing", description: "Signs for the digital age: 'Internet', 'Computer', 'Website', and 'App'.", status: "active", pointsValue: 25 },
+  { id: "10", title: "Unit 10: Social Communication", description: "Build deep bonds: 'Congratulations', 'Welcome', 'Celebrate', and 'Support'.", status: "active", pointsValue: 20 },
+  { id: "11", title: "Unit 11: School & Classroom Vocabulary", description: "Essential classroom and learning terminology: 'Teacher', 'Student', 'Subject', and 'Classroom'.", status: "active", pointsValue: 20 }
 ];
 
 export const INITIAL_QUESTS: Quest[] = [
-  { id: "q1", title: "Complete 1 Receptive Lesson", description: "Practice your listening vocabulary with standard BIM receptive quizzes.", progress: 0, target: 1, xpWorth: 15, collected: false, type: "daily" },
-  { id: "q2", title: "Earn 50 XP", description: "Practice consecutive BIM words to pile up experience points.", progress: 20, target: 50, xpWorth: 10, collected: false, type: "daily" },
-  { id: "q3", title: "Sign 'Terima Kasih' to a teammate", description: "Practice showing appreciation with flat-hand chin swipe motion.", progress: 1, target: 1, xpWorth: 10, collected: true, type: "daily" },
-  { id: "q4", title: "Send a friendly Nudge", description: "Remind your streak buddies to keep practicing their Malaysian Sign Language today.", progress: 0, target: 1, xpWorth: 15, collected: false, type: "friend" },
-  { id: "q5", title: "Collective BIM Mastery", description: "Accumulate total streak days with your peer group.", progress: 80, target: 100, xpWorth: 30, collected: false, type: "friend" },
+  { id: "q1", title: "Spend 5 minutes in Learning Path", description: "Engage in learning path units and receptive quizzes.", progress: 0, target: 5, xpWorth: 15, collected: false, type: "daily" },
+  { id: "q2", title: "Spend 5 minutes in Practice", description: "Practice your skills across tactile drills, mistakes and flashcards.", progress: 0, target: 5, xpWorth: 15, collected: false, type: "daily" },
+  { id: "q3", title: "Answer BIM Master Challenge", description: "Unlock or master an active unit standard quiz lesson.", progress: 0, target: 1, xpWorth: 20, collected: false, type: "daily" }
 ];
 
-export const INITIAL_BUDDIES: StreakBuddy[] = [
-  { id: "b1", name: "Sarah K.", avatar: sarahAvatar, streakDays: 15, nudged: false },
-  { id: "b2", name: "Jordan M.", avatar: jordanAvatar, streakDays: 8, nudged: false },
-  { id: "b3", name: "Elena R.", avatar: elenaAvatar, streakDays: 12, nudged: false },
-];
+export const INITIAL_BUDDIES: StreakBuddy[] = [];
 
 export const INITIAL_PHRASES: ToolkitPhrase[] = [
   { id: "bim_alphabet", phrase: "A–Z Hand Signs", description: "Learn standard single-handed manual alphabet shapes. Useful for fingerspelling names and locations across Malaysia.", image: practiceImg, category: "Basic Conversation" },
@@ -412,5 +412,23 @@ export const QUIZ_QUESTIONS: QuizQuestion[] = [
   { id: "u5_q1", unitId: "5", type: "multiple_choice", imageUrl: practiceImg, questionText: "What gesture represents 'Work' (Kerja) in a corporate discussion?", options: ["Tap your dominant fist vertically onto the wrist area of your non-dominant fist twice", "Pretend to type rapidly on a keyboard using all fingers", "Cross both index fingers in front of your face to form a neat cross", "Place both hands onto your hips and nod confidently"], correctAnswer: "Tap your dominant fist vertically onto the wrist area of your non-dominant fist twice", explanation: "Kerja (Work/Duty) is represented by hitting the wrist of your non-dominant hand with your dominant fist in a vertical hammer tap twice." },
   { id: "u5_q2", unitId: "5", type: "sign_recognition", imageUrl: practiceImg, questionText: "How is 'Teacher' (Cikgu / Guru) signed in Malaysian sign language?", options: ["Bring closed fingers near temples and push forward twice, followed by the downward person suffix gesture", "Form an 'A-B-C' shape in front of your head using your fingers", "Mime writing on a blackboard with white chalk", "Point at an open book with your dominant thumb"], correctAnswer: "Bring closed fingers near temples and push forward twice, followed by the downward person suffix gesture", explanation: "Guru or Cikgu (Teacher) combines the sign for teaching/direction (pushing from temples) with the standard sliding flat-hands person suffix." },
   { id: "u5_q3", unitId: "5", type: "multiple_choice", imageUrl: practiceImg, questionText: "Which gesture represents a 'Computer' (Komputer) in professional settings?", options: ["Move the 'C' handshape in circular motions along your forearm, or mime rhythmic keyboard typing", "Draw an invisible square screen with both dominant index fingers", "Touch your ear with your pinky while staring forward", "Cross your wrists and tap your fingers continuously like keys"], correctAnswer: "Move the 'C' handshape in circular motions along your forearm, or mime rhythmic keyboard typing", explanation: "Komputer is signed by forming a 'C' hand and rotating it along the opposite arm, or miming a focused desktop typing gesture." },
-  { id: "u5_q4", unitId: "5", type: "image_matching", imageUrl: slowlyPleaseImg, questionText: "How is 'Thank you for your Cooperation' (Terima Kasih Kerjasama) signed in a workplace meeting?", options: ["Combine the flat-hand chin swipe (Thank You) with interlocked fingers pushed outwards (Cooperation) politely", "Simply wave both open palms high in the sky with a low bow", "Cross your index fingers near your eyes and nod twice", "Press both hands flat against your forehead with closed eyes"], correctAnswer: "Combine the flat-hand chin swipe (Thank You) with interlocked fingers pushed outwards (Cooperation) politely", explanation: "To express cooperation appreciation, sign standard 'Terima Kasih' followed by interlocking your fingers and presenting them outward." }
+  { id: "u5_q4", unitId: "5", type: "image_matching", imageUrl: slowlyPleaseImg, questionText: "How is 'Thank you for your Cooperation' (Terima Kasih Kerjasama) signed in a workplace meeting?", options: ["Combine the flat-hand chin swipe (Thank You) with interlocked fingers pushed outwards (Cooperation) politely", "Simply wave both open palms high in the sky with a low bow", "Cross your index fingers near your eyes and nod twice", "Press both hands flat against your forehead with closed eyes"], correctAnswer: "Combine the flat-hand chin swipe (Thank You) with interlocked fingers pushed outwards (Cooperation) politely", explanation: "To express cooperation appreciation, sign standard 'Terima Kasih' followed by interlocking your fingers and presenting them outward." },
+
+  // Unit 6: Family & Home Life
+  { id: "u6_q1", unitId: "6", type: "multiple_choice", imageUrl: practiceImg, questionText: "How do you sign 'Mother' (Ibu) in standard BIM?", options: ["Double tap your right cheek with your index and middle fingers gently", "Touch your forehead with your thumb", "Mime cradling a baby in both arms", "Clasp both hands behind your back"], correctAnswer: "Double tap your right cheek with your index and middle fingers gently", explanation: "Ibu (Mother) is expressed with a warm double tap of stacked fingers against your upper right cheek." },
+
+  // Unit 7: Travel & Navigation
+  { id: "u7_q1", unitId: "7", type: "multiple_choice", imageUrl: practiceImg, questionText: "What represents 'Car' (Kereta) in Malaysian Sign Language?", options: ["Mime holding a steering wheel, shaking it slightly left and right", "Pretend to walk quickly on your toes", "Point both index fingers forward in quick straight lines", "Move your fist vertically up and down twice"], correctAnswer: "Mime holding a steering wheel, shaking it slightly left and right", explanation: "Hold an imaginary steering wheel and rotate it slightly back and forth to sign Kereta." },
+
+  // Unit 8: Healthcare & Medical Care
+  { id: "u8_q1", unitId: "8", type: "multiple_choice", imageUrl: practiceImg, questionText: "How is 'Doctor' (Doktor) signed in medical environments?", options: ["Place your dominant index and middle fingers against your opposite inner wrist (as if checking a pulse)", "Draw a neat cross symbol on your forehead", "Scribble on your palm with a pointer finger", "Place an open palm flat against your chest"], correctAnswer: "Place your dominant index and middle fingers against your opposite inner wrist (as if checking a pulse)", explanation: "Touch index and middle fingers onto the pulse point of your opposite wrist to indicate a health practitioner." },
+
+  // Unit 9: Technology & Computing
+  { id: "u9_q1", unitId: "9", type: "multiple_choice", imageUrl: practiceImg, questionText: "Which gesture represents the 'Internet' in modern professional dialogue?", options: ["Interlock the fingertips of both hands and wiggle them in an outward wave pattern", "Form a telephone receiver with your pinky and thumb", "Point at your computer screen with both thumbs", "Draw a neat circle in the air with your index finger"], correctAnswer: "Interlock the fingertips of both hands and wiggle them in an outward wave pattern", explanation: "Touch and wiggle fingertips of both open hands back and forth to express internet/network connectivity." },
+
+  // Unit 10: Social Communication
+  { id: "u10_q1", unitId: "10", type: "multiple_choice", imageUrl: practiceImg, questionText: "How do you sign congratulations or 'Welcome' (Selamat Datang) in BIM?", options: ["Extend both open hands flat and draw them inward toward your body with a welcoming smile", "Raise your fist in the sky confidently", "Sweep your dominant palm vertically down your nose", "Knock your knuckles together twice"], correctAnswer: "Extend both open hands flat and draw them inward toward your body with a welcoming smile", explanation: " selamat datang (Welcome) is signed by extending open palms flat and drawing them toward your torso in an inviting stroke." },
+
+  // Unit 11: School & Classroom Vocabulary
+  { id: "u11_q1", unitId: "11", type: "multiple_choice", imageUrl: practiceImg, questionText: "What represents 'Student' (Pelajar) in educational BIM settings?", options: ["Mime reading from flat open palms, followed by the person suffix sliding downward", "Tap your forehead with a closed fist twice", "Hold two fingers up in a victory sign", "Pretend to write on a desk with your finger"], correctAnswer: "Mime reading from flat open palms, followed by the person suffix sliding downward", explanation: "Pelajar (Student) is signed by indicating reading/acquiring from a book (palms), followed by the classic flat-hands person indicator." }
 ];

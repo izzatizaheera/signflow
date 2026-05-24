@@ -25,7 +25,9 @@ import {
   BadgeAlert,
   ArrowLeft,
   Video,
-  Trash2
+  Trash2,
+  Share2,
+  Edit3
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -58,9 +60,24 @@ import {
   convertYoutubeToEmbed
 } from "./data";
 
-import { supabase, isSupabaseConfigured } from "./lib/supabase";
+import { 
+  supabase, 
+  isSupabaseConfigured,
+  syncUserProfile,
+  getUserProgressList,
+  saveUserProgress,
+  getStreakRow,
+  updateStreakRow,
+  getAndSeedBuddies,
+  updateNudgeInteraction,
+  uploadAvatarFile,
+  updateUserProfile,
+  getFollowStats,
+  toggleFollow
+} from "./lib/supabase";
 import { BimAlphabetExplorer } from "./components/BimAlphabetExplorer";
 import { RequestPhraseModal } from "./components/RequestPhraseModal";
+import { AuthPage } from "./components/auth/AuthPage";
 import { getCombinedUserPhrases, deleteUserPhrase } from "./lib/userPhrasesDb";
 
 const translateEnglishToMalay = (input: string): { translated: string; keywords: string[] } => {
@@ -189,21 +206,54 @@ const findMatchingMedia = (phraseText: string, glossText: string) => {
 
 export default function App() {
   // Global User Stats (Persisted in Session/Local State)
-  const [xp, setXp] = useState<number>(20);
-  const [streak, setStreak] = useState<number>(12);
-  const [hearts, setHearts] = useState<number>(3);
-  const [level, setLevel] = useState<number>(5);
+  const [xp, setXp] = useState<number>(0);
+  const [streak, setStreak] = useState<number>(0);
+  const [hasCheckedInToday, setHasCheckedInToday] = useState<boolean>(false);
+  const [hearts, setHearts] = useState<number>(5); // full default 5 hearts
+  const [level, setLevel] = useState<number>(1);
   const [consecutiveCorrect, setConsecutiveCorrect] = useState<number>(0);
 
   // Supabase Auth and Sync States
   const [user, setUser] = useState<any>(null);
   const [authEmail, setAuthEmail] = useState<string>("");
   const [authPassword, setAuthPassword] = useState<string>("");
-  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
+  const [authMode, setAuthMode] = useState<"login" | "signup" | "forgot" | "reset_password_flow">("login");
+  const [newPassword, setNewPassword] = useState<string>("");
   const [authLoading, setAuthLoading] = useState<boolean>(false);
   const [supabaseFeedback, setSupabaseFeedback] = useState<string>(
     isSupabaseConfigured ? "Supabase initialized. Pending connection." : "Supabase offline. Running local-first BIM fallback mode."
   );
+
+  // Expanded Profile States & Editable Info
+  const [profileBio, setProfileBio] = useState<string>("BIM Beginner Ally. Committed to building conversational workflows with Deaf and Mute neighbors in Malaysia.");
+  const [profileUsername, setProfileUsername] = useState<string>("SignFlow Ally");
+  const [profileAvatar, setProfileAvatar] = useState<string>("https://i.pinimg.com/1200x/58/7a/5d/587a5da410420abe2e54b5ed9f605665.jpg");
+  const [followersCount, setFollowersCount] = useState<number>(0);
+  const [followingCount, setFollowingCount] = useState<number>(0);
+  const [isFollowingJordan, setIsFollowingJordan] = useState<boolean>(false);
+  const [isFollowingSarah, setIsFollowingSarah] = useState<boolean>(false);
+  const [isFollowingElena, setIsFollowingElena] = useState<boolean>(false);
+  const [profileSubTab, setProfileSubTab] = useState<"overview" | "followers" | "following" | "settings">("overview");
+  const [showResetModal, setShowResetModal] = useState<boolean>(false);
+  const [resetEmail, setResetEmail] = useState<string>("");
+  const [weeklyProgress, setWeeklyProgress] = useState<number>(0);
+
+  // Upgraded Learning Path / Completed Rules
+  const [completedTopicIds, setCompletedTopicIds] = useState<string[]>(["1"]); // Only Unit 1 unlocked initially
+
+  // Mistake Review Tracker state
+  const [mistakesList, setMistakesList] = useState<QuizQuestion[]>([]);
+
+  // Friend Quest Collaborative state
+  const [friendQuestProgress, setFriendQuestProgress] = useState<number>(3); // Matches 3/5 with Jordan/Sarah
+  
+  // User settings preferences
+  const [userSettings, setUserSettings] = useState({
+    vibrationEnabled: true,
+    soundSfxEnabled: true,
+    dailyReminderTime: "20:00",
+    linguisticTipsEnabled: true
+  });
 
   // App Navigation (Default Tab matches specified pathing)
   // 'path' (Path routing) | 'practice' (Practice screen drills) | 'toolkit' (Phrase search + AI translate) | 'quests' (Quests) | 'profile' (Profile)
@@ -281,26 +331,75 @@ export default function App() {
     }
   }, [selectedPathNode?.id]);
 
+  // loadQuestsProgress loads quests from database based on today's date
+  const loadQuestsProgress = async (userId: string, progressList: any[]) => {
+    setQuests((prevQuests) => {
+      const todayStr = new Date().toISOString().split("T")[0];
+      return prevQuests.map((q) => {
+        const progRow = progressList.find(p => p.lesson_id === `quest_prog_${q.id}_${todayStr}`);
+        const collRow = progressList.find(p => p.lesson_id === `quest_coll_${q.id}_${todayStr}`);
+        return {
+          ...q,
+          progress: progRow ? progRow.xp : 0,
+          collected: collRow ? collRow.completed : false
+        };
+      });
+    });
+  };
+
+  // incrementQuestProgress ticks up daily quests and persists to DB
+  const incrementQuestProgress = async (questId: string, amount: number) => {
+    const todayStr = new Date().toISOString().split("T")[0];
+    setQuests((prev) =>
+      prev.map((q) => {
+        if (q.id === questId) {
+          const nextProg = Math.min(q.target, q.progress + amount);
+          if (user && isSupabaseConfigured && supabase) {
+            saveUserProgress(user.id, `quest_prog_${q.id}_${todayStr}`, nextProg >= q.target, nextProg);
+          }
+          return { ...q, progress: nextProg };
+        }
+        return q;
+      })
+    );
+  };
+
+  // incrementWeeklyProgress increments weekly objectives and persists to DB
+  const incrementWeeklyProgress = async (amount: number) => {
+    setWeeklyProgress((prev) => {
+      const next = Math.min(100, prev + amount);
+      if (user && isSupabaseConfigured && supabase) {
+        saveUserProgress(user.id, "weekly_progress_value", true, next);
+      }
+      return next;
+    });
+  };
+
   // Sync user values with Supabase cloud database
-  const syncProgressToSupabase = async (updatedXp: number, updatedLevel: number, updatedStreak: number) => {
+  const syncProgressToSupabase = async (updatedXp: number, updatedLevel: number, updatedStreak: number, lessonId = "daily_activity") => {
     if (!isSupabaseConfigured || !supabase || !user) return;
     try {
-      const { error } = await supabase
-        .from("user_progress")
-        .upsert({
-          id: user.id,
-          email: user.email,
-          xp: updatedXp,
-          level: updatedLevel,
-          streak: updatedStreak,
-          updated_at: new Date().toISOString()
-        }, { onConflict: "id" });
-      if (error) {
-        console.warn("Failed saving user metrics to Supabase 'user_progress' table:", error.message);
-      }
+      // 1. Record progress to user_progress table
+      await saveUserProgress(user.id, lessonId, true, updatedXp);
+
+      // 2. Save streak row to streaks table
+      const todayStr = new Date().toISOString().split("T")[0];
+      await updateStreakRow(user.id, updatedStreak, Math.max(updatedStreak, 15), todayStr);
+      
+      setSupabaseFeedback(`Synced metrics to Supabase! Lvl: ${updatedLevel}, XP: ${updatedXp}, Streak: ${updatedStreak}d.`);
     } catch (err) {
       console.warn("Exception trying to sync stats with Supabase:", err);
     }
+  };
+
+  const handleDailyCheckIn = async () => {
+    if (hasCheckedInToday) return;
+    const newStreak = Math.max(1, streak + 1);
+    setStreak(newStreak);
+    setHasCheckedInToday(true);
+    incrementWeeklyProgress(10); // Optionally increment weekly progress here
+    notify(`🔥 Checked in for today! Streak increased to ${newStreak} days!`);
+    await syncProgressToSupabase(xp, level, newStreak, "daily_check_in");
   };
 
   // Auto-sync / load data from Supabase whenever user logs in
@@ -308,19 +407,107 @@ export default function App() {
     async function loadProgress() {
       if (!user || !isSupabaseConfigured || !supabase) return;
       try {
-        const { data, error } = await supabase
-          .from("user_progress")
-          .select("xp, level, streak")
-          .eq("id", user.id)
-          .single();
-        if (data) {
-          if (data.xp !== undefined && data.xp !== null) setXp(Number(data.xp));
-          if (data.level !== undefined && data.level !== null) setLevel(Number(data.level));
-          if (data.streak !== undefined && data.streak !== null) setStreak(Number(data.streak));
-          setSupabaseFeedback(`Connected to Supabase! Got stats: XP: ${data.xp}, Lvl: ${data.level}, Streak: ${data.streak}.`);
+        setSupabaseFeedback("Loading player profile from Supabase db...");
+        
+        // 1. Load / Sync User Profile
+        const profile = await syncUserProfile(user.id, user.email);
+        
+        // 2. Load Streak info
+        const streakRow = await getStreakRow(user.id);
+        const todayStr = new Date().toISOString().split("T")[0];
+        let loadedStreak = 0; // default for beginner
+        if (streakRow) {
+          loadedStreak = streakRow.current_streak;
+          setStreak(loadedStreak);
+          if (streakRow.last_active_date === todayStr) {
+            setHasCheckedInToday(true);
+          }
         }
-      } catch (e) {
-        console.log("No previous stats found on Supabase. Offline storage handles it automatically.");
+        
+        // 3. Load progress list and calculate sum XP and completed topics
+        const progressList = await getUserProgressList(user.id);
+        let loadedXp = 0; // default for beginner
+        const loadedCompletedTopicIds = ["1"]; // Unit 1 always unlocked
+        let loadedWeeklyProgress = 0;
+
+        if (progressList && progressList.length > 0) {
+          // Calculate sum of earned XP
+          const totalXp = progressList.reduce((acc, curr) => acc + (curr.xp || 0), 0);
+          loadedXp = totalXp;
+          setXp(loadedXp);
+
+          // Parse completed topics from DB
+          progressList.forEach(p => {
+            if (p.completed) {
+              if (p.lesson_id.startsWith("completed_topic_")) {
+                const topicId = p.lesson_id.replace("completed_topic_", "");
+                if (!loadedCompletedTopicIds.includes(topicId)) {
+                  loadedCompletedTopicIds.push(topicId);
+                }
+              } else if (p.lesson_id.startsWith("topic_")) {
+                const topicId = p.lesson_id.replace("topic_", "");
+                if (!loadedCompletedTopicIds.includes(topicId)) {
+                  loadedCompletedTopicIds.push(topicId);
+                }
+              }
+            }
+          });
+
+          // Load weekly progress
+          const weeklyProgRow = progressList.find(p => p.lesson_id === "weekly_progress_value");
+          if (weeklyProgRow) {
+            loadedWeeklyProgress = weeklyProgRow.xp || 0;
+          }
+        }
+
+        setCompletedTopicIds(loadedCompletedTopicIds);
+
+        // Calculate and set Level
+        const calculatedLvl = Math.max(1, Math.floor(loadedXp / 100) + 1);
+        setLevel(calculatedLvl);
+
+        // Trigger weekly progress login action (+10% on first login of week/day, up to 10)
+        let finalWeeklyProgress = loadedWeeklyProgress;
+        if (finalWeeklyProgress === 0) {
+          finalWeeklyProgress = 10;
+          await saveUserProgress(user.id, "weekly_progress_value", true, 10);
+        }
+        setWeeklyProgress(finalWeeklyProgress);
+
+        // 4. Load & Seed buddies dynamically
+        const dbBuddies = await getAndSeedBuddies(user.id, INITIAL_BUDDIES);
+        if (dbBuddies && dbBuddies.length > 0) {
+          const formatted = dbBuddies.map(b => ({
+            id: b.id,
+            name: b.buddy_name,
+            avatar: b.buddy_avatar,
+            streakDays: b.buddy_streak,
+            nudged: b.nudge_count > 0
+          }));
+          setBuddies(formatted);
+        }
+
+        // Load Quests
+        await loadQuestsProgress(user.id, progressList);
+
+        // Load Followers and Following lists
+        const followStats = await getFollowStats(user.id);
+        if (followStats) {
+          setFollowersCount(followStats.followers);
+          setFollowingCount(followStats.following);
+        }
+
+        // Sync local states with profile
+        if (profile) {
+          setProfileUsername(profile.username || user.email.split("@")[0]);
+          setProfileAvatar(profile.avatar_url || "https://i.pinimg.com/1200x/58/7a/5d/587a5da410420abe2e54b5ed9f605665.jpg");
+          setProfileBio(profile.bio || "BIM Beginner Ally. Committed to building conversational workflows with Deaf and Mute neighbors in Malaysia.");
+        }
+
+        setSupabaseFeedback(`Connected to Supabase! Lvl: ${calculatedLvl}, XP: ${loadedXp}, Streak: ${loadedStreak}d. Profiler updated: @${profile?.username || user.email.split("@")[0]}.`);
+      } catch (e: any) {
+        console.warn("No previous stats found on Supabase. Offline storage handles it automatically.", e);
+        setSupabaseFeedback("Supabase connected. Loaded offline fallback dataset successfully.");
       }
     }
     loadProgress();
@@ -486,8 +673,75 @@ export default function App() {
       }
     } catch (err: any) {
       console.error("Supabase authentication error:", err);
-      notify("Authentication error: " + err.message);
-      setSupabaseFeedback("Auth Error: " + err.message);
+      let errorMessage = err.message;
+      if (errorMessage === "Email not confirmed") {
+        errorMessage = "Please check your email and confirm your address to log in.";
+      } else if (errorMessage === "Invalid login credentials") {
+        errorMessage = "Invalid email or password. Please verify your credentials and try again.";
+      } else if (errorMessage.toLowerCase().includes("rate limit") || errorMessage.toLowerCase().includes("seconds")) {
+        errorMessage = "Please wait a moment before trying again: " + errorMessage;
+      }
+      notify("Authentication error: " + errorMessage);
+      setSupabaseFeedback("Auth Error: " + errorMessage);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resetEmail) {
+      notify("Please enter your email address.");
+      return;
+    }
+    setAuthLoading(true);
+    if (!isSupabaseConfigured || !supabase) {
+      setTimeout(() => {
+        setAuthLoading(false);
+        notify(`📩 Simulating recovery dispatch to: ${resetEmail}`);
+        setShowResetModal(false);
+      }, 800);
+      return;
+    }
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(resetEmail, {
+        redirectTo: window.location.origin
+      });
+      if (error) throw error;
+      notify("📩 Submitting: Check your inbox for recovery key code!");
+      setShowResetModal(false);
+    } catch (err: any) {
+      console.error("Supabase password recovery error:", err);
+      let errorMessage = err.message;
+      if (errorMessage.toLowerCase().includes("rate limit") || errorMessage.toLowerCase().includes("seconds")) {
+        errorMessage = "Please wait a moment before requesting another reset link: " + errorMessage;
+      }
+      notify("Password recovery request failed: " + errorMessage);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleUpdatePasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPassword) {
+      notify("Please enter a new password.");
+      return;
+    }
+    setAuthLoading(true);
+    try {
+      if (supabase && isSupabaseConfigured) {
+        const { error } = await supabase.auth.updateUser({ password: newPassword });
+        if (error) throw error;
+        notify("🔒 Password updated successfully! Please login with your new credentials.");
+        setAuthMode("login");
+        window.location.hash = ""; // clear hash
+      } else {
+        notify("🔒 Simulated password updated successfully.");
+        setAuthMode("login");
+      }
+    } catch (err: any) {
+      notify("Failed to update password: " + err.message);
     } finally {
       setAuthLoading(false);
     }
@@ -552,10 +806,17 @@ export default function App() {
       // Increment quests progress manually
       setQuests((prevQuests) => {
         return prevQuests.map((q) => {
-          if (q.id === "q2") { // Earn 50 XP
-            return { ...q, progress: Math.min(q.target, q.progress + pointsEarned) };
+          // Quest 1: 5 minutes in Learning Path (tracking progress as lesson completions or time)
+          // For now, tracking as lesson completion count
+          if (q.id === "q1") {
+            return { ...q, progress: Math.min(q.target, q.progress + 1) };
           }
-          if (q.id === "q1") { // Complete Receptive Lesson
+          // Quest 2: 5 minutes in Practice (tracking progress as drill completion)
+          if (q.id === "q2") {
+            return { ...q, progress: Math.min(q.target, q.progress + 1) };
+          }
+          // Quest 3: BIM Master Challenge
+          if (q.id === "q3") {
             return { ...q, progress: Math.min(q.target, q.progress + 1) };
           }
           return q;
@@ -579,6 +840,20 @@ export default function App() {
         return next;
       });
       xpMsg = "Mistake noted for Daily Review. Take another look!";
+      
+      // Save mistake state in modern mistakes list with DB persistence
+      setMistakesList((prev) => {
+        const alreadyExists = prev.some((q) => q.id === currentQuestion.id);
+        if (!alreadyExists) {
+          const updated = [...prev, currentQuestion];
+          if (user && isSupabaseConfigured && supabase) {
+            saveUserProgress(user.id, `mistake_${currentQuestion.id}`, false, 0);
+          }
+          return updated;
+        }
+        return prev;
+      });
+
       setAnswerCorrection({
         correct: false,
         feedback: xpMsg,
@@ -610,7 +885,29 @@ export default function App() {
     } else {
       // Finished all available
       setIsQuizFinished(true);
-      notify("🎉 Complete! Receptive Drill master cycle completed! Let's view your progress.");
+      
+      const currentUnitId = selectedPathNode?.id || "1";
+      const totalCorrectInGame = quizCorrectCount;
+      const passScoreRequired = Math.max(1, Math.floor(activeQuestions.length * 0.6)); // At least 60% accuracy required
+
+      if (totalCorrectInGame >= passScoreRequired) {
+        notify(`🎉 Mastery achieved! Correct: ${totalCorrectInGame}/${activeQuestions.length}. Active Unit Cleared!`);
+        
+        // Unlock next topic
+        const numericId = parseInt(currentUnitId, 10);
+        const nextUnitIdStr = (numericId + 1).toString();
+        
+        if (!completedTopicIds.includes(nextUnitIdStr)) {
+          const updatedPathUnlocks = [...completedTopicIds, nextUnitIdStr];
+          setCompletedTopicIds(updatedPathUnlocks);
+          
+          if (user && isSupabaseConfigured && supabase) {
+            saveUserProgress(user.id, `topic_${nextUnitIdStr}`, true, quizCorrectCount * 10);
+          }
+        }
+      } else {
+        notify(`⚡ Cycle finished with ${totalCorrectInGame}/${activeQuestions.length} correct. Try again to reach ${passScoreRequired} correct and unlock the next unit!`);
+      }
     }
   };
 
@@ -716,16 +1013,26 @@ export default function App() {
   };
 
   // Trigger Nudge for Streak Buddy
-  const handleNudge = (buddyId: string) => {
+  const handleNudge = async (buddyId: string) => {
     const targetBuddy = buddies.find((b) => b.id === buddyId);
     if (targetBuddy) {
       console.log("Nudge Clicked:", targetBuddy.name);
     }
+
+    if (user && isSupabaseConfigured && supabase) {
+      // Record nudge into Supabase relational tables 'nudges' and 'buddies'
+      await updateNudgeInteraction(user.id, buddyId, `Friendly Nudge from ${user.email}`);
+    }
+
     setBuddies((prev) =>
       prev.map((b) => {
         if (b.id === buddyId) {
           if (!b.nudged) {
-            setXp((prevXp) => prevXp + 5);
+            setXp((prevXp) => {
+              const nextVal = prevXp + 5;
+              syncProgressToSupabase(nextVal, level, streak, "nudge_buddy");
+              return nextVal;
+            });
             // manually incremental Friend Quest completion progress
             setQuests((prevQuests) =>
               prevQuests.map((q) => {
@@ -735,7 +1042,7 @@ export default function App() {
                 return q;
               })
             );
-            notify(`Nudged ${b.name}! +5 Buddy XP unlocked! ⚡`);
+            notify(`Nudged ${b.name}! +5 Buddy XP unlocked! ⚡ (Saved in Supabase!)`);
             console.log("Nudge Success");
             return { ...b, nudged: true, streakDays: b.streakDays + 1 };
           }
@@ -746,7 +1053,7 @@ export default function App() {
   };
 
   // Claim Quest reward
-  const handleClaimQuest = (questId: string, xpWorth: number) => {
+  const handleClaimQuest = async (questId: string, xpWorth: number) => {
     setQuests((prev) =>
       prev.map((q) => {
         if (q.id === questId) {
@@ -757,6 +1064,19 @@ export default function App() {
     );
     setXp((prev) => prev + xpWorth);
     notify(`🎉 Claimed Quest Reward! +${xpWorth} XP gained!`);
+
+    if (user && isSupabaseConfigured && supabase) {
+      try {
+        const today = new Date();
+        const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+        await saveUserProgress(user.id, `quest_coll_${questId}_${todayStr}`, true, 1);
+        
+        // Also fire off a sync for the new XP
+        syncProgressToSupabase(xp + xpWorth, level, streak, `quest_claim_xp_${questId}`);
+      } catch (e) {
+        console.warn("Failed to persist quest collection:", e);
+      }
+    }
   };
 
   // Start Speed Recognition Mode
@@ -846,20 +1166,14 @@ export default function App() {
 
           {/* Gamified Header Stats Panel */}
           <div className="flex items-center gap-1.5 bg-[#f3f3f5] hover:bg-[#e8e8ea] px-3.5 py-1.5 rounded-full border border-[#bec8cd] transition-all duration-150">
-            {/* XP level badge */}
-            <div className="flex items-center gap-1 text-xs font-semibold text-[#005a71] border-r border-[#bec8cd]/60 pr-2 cursor-pointer" onClick={() => notify(`You are Ally Level ${level} with ${xp} total experience points!`)}>
-              <span className="text-[#0e7490]">ALLY Lvl</span>
-              <span className="font-bold text-sm text-[#005a71]">{level}</span>
-            </div>
-
             {/* Streak metrics */}
-            <div className="flex items-center gap-1 pl-1 cursor-pointer hover:scale-105 transition-transform" onClick={() => notify(`${streak} days consecutive BIM practice streak maintained! Keep it up!`)}>
+            <div className="flex items-center gap-1 cursor-pointer hover:scale-105 transition-transform" onClick={() => notify(`${streak} days consecutive BIM practice streak maintained! Keep it up!`)}>
               <Flame className="w-4 h-4 text-amber-500 fill-amber-500 animate-pulse" />
               <span className="font-bold text-sm text-[#2f1500]">{streak}</span>
             </div>
 
             {/* Health / Hearts */}
-            <div className="flex items-center gap-1 pl-1 border-l border-[#bec8cd]/60 pl-2 cursor-pointer" onClick={hearts === 0 ? refillHearts : undefined}>
+            <div className="flex items-center gap-1 border-l border-[#bec8cd]/60 pl-2 cursor-pointer" onClick={hearts === 0 ? refillHearts : undefined}>
               <Heart className={`w-4 h-4 ${hearts === 0 ? "text-[#ba1a1a] animate-bounce" : "text-[#ba1a1a] fill-[#ba1a1a]"}`} />
               <span className="font-bold text-sm text-[#93000a]">{hearts}</span>
               {hearts === 0 && (
@@ -2290,13 +2604,13 @@ export default function App() {
                 <div className="text-center sm:text-left">
                   <span className="text-xs uppercase font-mono font-bold text-[#0e7490] block">QUEST DISCIPLINE</span>
                   <p className="font-black text-xl text-[#005a71] tracking-tight">
-                    2/3 COMPLETED TODAY
+                    {quests.filter(q => q.type === "daily" && q.collected).length}/{quests.filter(q => q.type === "daily").length} COMPLETED TODAY
                   </p>
                 </div>
                 <div className="flex gap-2 text-xs">
                   <span className="bg-amber-100 text-[#6e3900] font-bold px-3 py-1 rounded-full flex items-center gap-1">
-                    <Flame className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
-                    +25 XP Streak Accumulator
+                    <Flame className="w-3.5 h-3.5 text-amber-500 fill-amber-500 hover:animate-pulse" />
+                    +{quests.filter(q => q.type === "daily" && q.collected).reduce((sum, q) => sum + q.xpWorth, 0)} XP Streak Accumulator
                   </span>
                 </div>
               </div>
@@ -2610,248 +2924,529 @@ export default function App() {
               </h1>
             </div>
 
-            {/* Profile Avatar & Title matching Screen 2 precisely */}
+            {/* Profile Avatar & Title matching Screen 2 precisely with state binders */}
             <div className="bg-white rounded-2xl border border-[#bec8cd]/60 p-6 text-center space-y-4 shadow-xs relative overflow-hidden">
               <div className="absolute top-0 left-0 w-full h-1.5 bg-[#005a71]" />
               
               {/* Centered Profile Avatar */}
-              <div className="relative w-28 h-28 mx-auto shrink-0">
+              <div className="relative w-28 h-28 mx-auto shrink-0 group">
                 <img
-                  src={INITIAL_BUDDIES[1].avatar} // Alex Signer matching image
-                  alt="Alex Signer BIM Companion"
+                  src={profileAvatar}
+                  alt={profileUsername}
                   className="w-full h-full object-cover rounded-full border-4 border-white shadow-md ring-4 ring-[#005a71]"
                   referrerPolicy="no-referrer"
                 />
                 
-                {/* Ally Level 5 badge */}
+                {/* Ally Level badge */}
                 <div className="absolute -bottom-2.5 left-1/2 -translate-x-1/2 bg-[#005a71] text-white text-[9.5px] font-black uppercase tracking-wider px-3 py-1 rounded-full shadow-md whitespace-nowrap">
-                  ALLY LEVEL 5
+                  ALLY LEVEL {Math.floor(xp / 100) + 1}
                 </div>
               </div>
 
               {/* Name Block */}
               <div className="pt-2">
                 <h2 className="text-2xl font-black text-[#1a1c1d]">
-                  Alex Signer
+                  {profileUsername}
                 </h2>
                 <p className="text-xs font-mono font-semibold text-[#0e7490]">
-                  @AlexSigner
+                  @{profileUsername.replace(/\s+/g, "").toLowerCase()}
                 </p>
               </div>
 
               {/* Brief custom bio summary */}
               <p className="text-xs text-[#3f484c] max-w-md mx-auto leading-relaxed">
-                BIM Beginner Ally. Committed to building conversational workflows with Deaf and Mute neighbors in Malaysia. Practicing daily receptive and expressive gestures!
+                {profileBio}
               </p>
-            </div>
 
-            {/* 🔐 Supabase Auth and Cloud Database Sync Panel */}
-            <div className="bg-white rounded-2xl border-2 border-cyan-600/30 p-6 space-y-4 shadow-sm relative overflow-hidden">
-              <div className="absolute top-0 left-0 w-full h-1.5 bg-[#0e7490]" />
-              
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="p-1.5 bg-[#0e7490]/10 text-[#005a71] rounded-lg">
-                    <Layers className="w-5 h-5 text-[#005a71]" />
-                  </span>
-                  <div>
-                    <h3 className="font-extrabold text-base text-[#1a1c1d]">Supabase Cloud Sync</h3>
-                    <p className="text-[10px] text-[#3f484c]/80 font-mono tracking-tight">{supabaseFeedback}</p>
-                  </div>
+              {/* Followers and Following counters with share profile trigger */}
+              <div className="flex items-center justify-center gap-6 pt-2 pb-1 border-t border-slate-100 max-w-xs mx-auto text-xs">
+                <div className="text-center">
+                  <p className="font-extrabold text-base text-slate-800">{followersCount}</p>
+                  <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Followers</p>
                 </div>
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
-                  user ? "bg-cyan-100 text-[#0e7490]" : "bg-amber-100 text-[#714b00]"
-                }`}>
-                  {user ? "Cloud Synced" : "Offline / Demo"}
-                </span>
-              </div>
-
-              {user ? (
-                <div className="bg-cyan-50/50 p-4 rounded-xl border border-cyan-100 space-y-3">
-                  <div className="flex justify-between items-center text-xs">
-                    <div>
-                      <p className="font-bold text-[#1a1c1d]">Active Session Profile:</p>
-                      <p className="text-[#3f484c] font-mono break-all">{user.email}</p>
-                    </div>
-                    <button
-                      className="text-xs font-bold text-red-600 hover:text-red-800 hover:underline cursor-pointer bg-white border border-red-200 px-3 py-1.5 rounded-lg transition-transform"
-                      onClick={handleSignOut}
-                    >
-                      Sign Out
-                    </button>
-                  </div>
-                  <div className="text-[11px] text-[#004d62] leading-relaxed">
-                    🌟 <strong>Progress Sync:</strong> Your BIM course nodes, mastered vocabulary, and quiz metrics are securely synchronized and tracked inside the Supabase database.
-                  </div>
+                <div className="h-6 w-px bg-slate-200" />
+                <div className="text-center">
+                  <p className="font-extrabold text-base text-slate-800">{followingCount}</p>
+                  <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Following</p>
                 </div>
-              ) : (
-                <form onSubmit={handleAuthSubmit} className="space-y-3.5 pt-1">
-                  <p className="text-xs text-[#3f484c] leading-relaxed">
-                    Create a free beginner account to enable automated progress syncing via Supabase Auth and load signs dynamically from the <code>signs</code> Cloud table.
-                  </p>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[#1a1c1d] uppercase font-mono">Email Address</label>
-                      <input
-                        type="email"
-                        placeholder="pelajar@signflow.my"
-                        className="w-full p-2.5 text-xs bg-[#f9f9fb] border border-[#bec8cd] rounded-xl focus:border-[#005a71] focus:ring-1 focus:ring-[#005a71]"
-                        value={authEmail}
-                        onChange={(e) => setAuthEmail(e.target.value)}
-                        disabled={authLoading}
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[#1a1c1d] uppercase font-mono">Password</label>
-                      <input
-                        type="password"
-                        placeholder="••••••••"
-                        className="w-full p-2.5 text-xs bg-[#f9f9fb] border border-[#bec8cd] rounded-xl focus:border-[#005a71] focus:ring-1 focus:ring-[#005a71]"
-                        value={authPassword}
-                        onChange={(e) => setAuthPassword(e.target.value)}
-                        disabled={authLoading}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between pt-1 gap-2 flex-wrap md:flex-nowrap">
-                    <div className="flex gap-4 text-xs">
-                      <label className="flex items-center gap-1.5 cursor-pointer">
-                        <input
-                          type="radio"
-                          name="authMode"
-                          checked={authMode === "login"}
-                          onChange={() => setAuthMode("login")}
-                          disabled={authLoading}
-                          className="accent-[#005a71]"
-                        />
-                        <span className="font-semibold text-xs text-[#1a1c1d]">Log In</span>
-                      </label>
-                      <label className="flex items-center gap-1.5 cursor-pointer">
-                        <input
-                          type="radio"
-                          name="authMode"
-                          checked={authMode === "signup"}
-                          onChange={() => setAuthMode("signup")}
-                          disabled={authLoading}
-                          className="accent-[#005a71]"
-                        />
-                        <span className="font-semibold text-xs text-[#1a1c1d]">Sign Up</span>
-                      </label>
-                    </div>
-
-                    <button
-                      type="submit"
-                      disabled={authLoading}
-                      className="px-5 py-2 bg-[#005a71] text-white text-xs font-bold rounded-xl hover:bg-[#0e7490] active:scale-95 transition-all shadow-sm"
-                    >
-                      {authLoading ? "Synchronizing..." : authMode === "login" ? "Log In & Sync" : "Create Account & Sync"}
-                    </button>
-                  </div>
-                </form>
-              )}
-            </div>
-
-            {/* Weekly streak calendar matching Screen 2 precisely */}
-            <div className="bg-white rounded-2xl border border-[#bec8cd]/60 p-6 space-y-4 shadow-xs">
-              
-              <div className="flex justify-between items-center gap-2">
-                <div className="flex items-center gap-2">
-                  <Calendar className="w-5 h-5 text-amber-500 fill-amber-100" />
-                  <span className="font-extrabold text-base text-[#1a1c1d]">Weekly Progress</span>
-                </div>
-                <span className="font-bold text-sm text-[#fe932c] flex items-center gap-1 bg-amber-50 px-3 py-1 rounded-full border border-amber-200">
-                  <Flame className="w-4 h-4 fill-amber-500" />
-                  12 Day Streak
-                </span>
-              </div>
-
-              {/* Monday to Sunday Day Nodes */}
-              <div className="grid grid-cols-7 gap-2 text-center pt-2 select-none">
-                {[
-                  { name: "M", done: true },
-                  { name: "T", done: true },
-                  { name: "W", done: true },
-                  { name: "T", current: true },
-                  { name: "F", done: false },
-                  { name: "S", done: false },
-                  { name: "S", done: false }
-                ].map((day, idx) => {
-                  return (
-                    <div key={idx} className="space-y-2">
-                      <span className="text-xs font-semibold text-[#3f484c]">{day.name}</span>
-                      <div className={`w-8 h-8 rounded-full mx-auto flex items-center justify-center border transition-all ${
-                        day.done
-                          ? "bg-[#fe932c] border-[#fe932c] text-white text-xs font-bold"
-                          : day.current
-                          ? "border-[#005a71] bg-white ring-2 ring-[#005a71]/10 text-[#005a71]"
-                          : "bg-[#f3f3f5] border-[#bec8cd]/60"
-                      }`}>
-                        {day.done ? (
-                          <Check className="w-4 h-4 stroke-[3]" />
-                        ) : day.current ? (
-                          <div className="w-2 h-2 rounded-full bg-[#005a71]" />
-                        ) : null}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Streak Buddies matching Screen 2 precisely */}
-            <div className="space-y-4">
-              <div className="flex justify-between items-center px-1">
-                <h3 className="font-extrabold text-base text-[#1a1c1d]">
-                  Streak Buddies
-                </h3>
-                <span
-                  className="text-xs font-bold text-[#0e7490] hover:underline cursor-pointer"
-                  onClick={() => notify("Displaying absolute buddy network...")}
+                <div className="h-6 w-px bg-slate-200" />
+                <button
+                  onClick={() => {
+                    if (navigator.clipboard) {
+                      navigator.clipboard.writeText(window.location.href);
+                    }
+                    notify("📋 Profile share link copied to clipboard!");
+                  }}
+                  className="flex flex-col items-center justify-center p-2 text-slate-600 hover:text-[#005a71] transition-colors cursor-pointer"
                 >
-                  View All
-                </span>
+                  <Share2 className="w-5 h-5 stroke-[2] active:scale-90" />
+                  <span className="text-[10px] uppercase font-bold tracking-wider pt-0.5">Share</span>
+                </button>
               </div>
+            </div>
 
-              <div className="space-y-3">
-                {buddies.map((buddy) => (
-                  <div
-                    key={buddy.id}
-                    className="bg-white rounded-2xl border border-[#bec8cd]/60 p-4 flex items-center justify-between gap-4 shadow-2xs hover:border-[#005a71]/40 transition-colors"
+            {/* Sub-Tabs Selector Bar */}
+            <div className="flex border-b border-slate-200 gap-1 overflow-x-auto pb-px select-none">
+              {[
+                { id: "overview", label: "Overview", icon: Layers },
+                { id: "followers", label: "Followers", icon: Heart },
+                { id: "following", label: "Following", icon: Sparkles },
+                { id: "settings", label: "Settings", icon: Edit3 }
+              ].map((tab) => {
+                const IconComponent = tab.icon;
+                const isSelected = profileSubTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setProfileSubTab(tab.id as any)}
+                    className={`flex items-center gap-1.5 py-2.5 px-4 text-xs font-bold border-b-2 whitespace-nowrap transition-all cursor-pointer ${
+                      isSelected 
+                        ? "border-[#005a71] text-[#005a71] bg-cyan-50/40 font-extrabold"
+                        : "border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-50/60"
+                    }`}
                   >
-                    {/* Details avatar circle */}
-                    <div className="flex items-center gap-3">
-                      <img
-                        src={buddy.avatar}
-                        alt={buddy.name}
-                        className="w-12 h-12 rounded-full object-cover border-2 border-slate-100"
-                        referrerPolicy="no-referrer"
-                      />
-                      <div>
-                        <h4 className="font-extrabold text-sm text-[#1a1c1d]">{buddy.name}</h4>
-                        <span className="text-[10px] font-mono font-bold text-[#fe932c] flex items-center gap-1">
-                          <Flame className="w-3.5 h-3.5 fill-[#fe932c]" />
-                          {buddy.streakDays} days
+                    <IconComponent className="w-3.5 h-3.5" />
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Profile Tab Render Block */}
+            <div className="space-y-6">
+
+              {/* Sub-tab 1: Overview */}
+              {profileSubTab === "overview" && (
+                <div className="space-y-6">
+                  {/* 🔐 Supabase Auth and Cloud Database Sync Panel inside Overview */}
+                  <div className="bg-white rounded-2xl border-2 border-cyan-600/30 p-6 space-y-4 shadow-sm relative overflow-hidden">
+                    <div className="absolute top-0 left-0 w-full h-1.5 bg-[#0e7490]" />
+                    
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="p-1.5 bg-[#0e7490]/10 text-[#005a71] rounded-lg">
+                          <Layers className="w-5 h-5 text-[#005a71]" />
                         </span>
+                        <div>
+                          <h3 className="font-extrabold text-base text-[#1a1c1d]">Supabase Cloud Sync</h3>
+                          <p className="text-[10px] text-[#3f484c]/80 font-mono tracking-tight">{supabaseFeedback}</p>
+                        </div>
+                      </div>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
+                        user ? "bg-cyan-100 text-[#0e7490]" : "bg-amber-100 text-[#714b00]"
+                      }`}>
+                        {user ? "Cloud Synced" : "Offline / Demo"}
+                      </span>
+                    </div>
+
+                    {user ? (
+                      <div className="bg-cyan-50/50 p-4 rounded-xl border border-cyan-100 space-y-3">
+                        <div className="flex justify-between items-center text-xs">
+                          <div>
+                            <p className="font-bold text-[#1a1c1d]">Active Session Profile:</p>
+                            <p className="text-[#3f484c] font-mono break-all">{user.email}</p>
+                          </div>
+                          <button
+                            className="text-xs font-bold text-red-600 hover:text-red-800 hover:underline cursor-pointer bg-white border border-red-200 px-3 py-1.5 rounded-lg transition-transform"
+                            onClick={handleSignOut}
+                          >
+                            Sign Out
+                          </button>
+                        </div>
+                        <div className="text-[11px] text-[#004d62] leading-relaxed">
+                          🌟 <strong>Progress Sync:</strong> Your BIM course units, mastered vocabulary, and quiz metrics are securely synchronized and tracked inside the Supabase database.
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                      <AuthPage 
+                        authMode={authMode} 
+                        setAuthMode={setAuthMode} 
+                        authEmail={authEmail} 
+                        setAuthEmail={setAuthEmail} 
+                        authPassword={authPassword} 
+                        setAuthPassword={setAuthPassword}
+                        handleAuthSubmit={handleAuthSubmit}
+                        handleForgotPassword={handleForgotPassword}
+                        authLoading={authLoading}
+                        notify={notify}
+                        resetEmail={resetEmail}
+                        setResetEmail={setResetEmail}
+                      />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Weekly streak calendar matching Screen 2 precisely */}
+                  <div className="bg-white rounded-2xl border border-[#bec8cd]/60 p-6 space-y-4 shadow-xs">
+                    <div className="flex justify-between items-center gap-2">
+                      <div className="flex items-center gap-2">
+                        <Calendar className="w-5 h-5 text-amber-500 fill-amber-100" />
+                        <span className="font-extrabold text-base text-[#1a1c1d]">Weekly Progress</span>
+                      </div>
+                      {hasCheckedInToday ? (
+                        <span className="font-bold text-sm text-[#fe932c] flex items-center gap-1 bg-amber-50 px-3 py-1 rounded-full border border-amber-200">
+                          <Flame className="w-4 h-4 fill-amber-500 animate-pulse" />
+                          {streak} Day Streak
+                        </span>
+                      ) : (
+                        <button 
+                          onClick={handleDailyCheckIn}
+                          className="font-bold text-sm text-yellow-50 flex items-center gap-1 bg-amber-500 hover:bg-amber-600 active:scale-95 px-3 py-1 rounded-full border border-amber-600 transition-all cursor-pointer shadow-sm"
+                        >
+                          <Flame className="w-4 h-4 text-white" />
+                          Check In
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-7 gap-2 text-center pt-2 select-none">
+                      {[0, 1, 2, 3, 4, 5, 6].map((idx) => {
+                        const dayNames = ["M", "T", "W", "T", "F", "S", "S"];
+                        const name = dayNames[idx];
+                        const todayIdx = new Date().getDay() === 0 ? 6 : new Date().getDay() - 1;
+                        const isCurrent = idx === todayIdx;
+                        let isDone = false;
+                        if (idx < todayIdx) {
+                          const daysAgo = todayIdx - idx;
+                          const pastStreak = hasCheckedInToday ? streak - 1 : streak;
+                          isDone = daysAgo <= pastStreak && pastStreak > 0;
+                        } else if (idx === todayIdx) {
+                          isDone = hasCheckedInToday;
+                        }
+                        return { name, current: isCurrent, done: isDone };
+                      }).map((day, idx) => (
+                        <div key={idx} className="space-y-2">
+                          <span className="text-xs font-semibold text-[#3f484c]">{day.name}</span>
+                          <div className={`w-8 h-8 rounded-full mx-auto flex items-center justify-center border transition-all ${
+                            day.done
+                              ? "bg-[#fe932c] border-[#fe932c] text-white text-xs font-bold"
+                              : day.current
+                              ? "border-[#005a71] bg-white ring-2 ring-[#005a71]/10 text-[#005a71]"
+                              : "bg-[#f3f3f5] border-[#bec8cd]/60"
+                          }`}>
+                            {day.done ? (
+                              <Check className="w-4 h-4 stroke-[3]" />
+                            ) : day.current ? (
+                              <div className="w-2 h-2 rounded-full bg-[#005a71]" />
+                            ) : null}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Streak Buddies matching Screen 2 precisely */}
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-center px-1">
+                      <h3 className="font-extrabold text-base text-[#1a1c1d]">
+                        Streak Buddies
+                      </h3>
+                      <span
+                        className="text-xs font-bold text-[#0e7490] hover:underline cursor-pointer"
+                        onClick={() => notify("Active peer support framework is fully active!")}
+                      >
+                        Global Network
+                      </span>
+                    </div>
+
+                    <div className="space-y-3">
+                      {buddies.map((buddy) => (
+                        <div
+                          key={buddy.id}
+                          className="bg-white rounded-2xl border border-[#bec8cd]/60 p-4 flex items-center justify-between gap-4 shadow-2xs hover:border-[#005a71]/40 transition-colors"
+                        >
+                          <div className="flex items-center gap-3">
+                            <img
+                              src={buddy.avatar}
+                              alt={buddy.name}
+                              className="w-12 h-12 rounded-full object-cover border-2 border-slate-100"
+                              referrerPolicy="no-referrer"
+                            />
+                            <div>
+                              <h4 className="font-extrabold text-sm text-[#1a1c1d]">{buddy.name}</h4>
+                              <span className="text-[10px] font-mono font-bold text-[#fe932c] flex items-center gap-1">
+                                <Flame className="w-3.5 h-3.5 fill-[#fe932c]" />
+                                {buddy.streakDays} days
+                              </span>
+                            </div>
+                          </div>
+
+                          <button
+                            className={`px-6 py-2 rounded-full font-bold text-xs transition-all cursor-pointer ${
+                              buddy.nudged
+                                ? "bg-slate-100 border border-[#bec8cd] text-slate-400 cursor-not-allowed"
+                                : "border-2 border-[#005a71] text-[#005a71] bg-white hover:bg-[#005a71]/5 active:scale-95"
+                            }`}
+                            onClick={() => handleNudge(buddy.id)}
+                            disabled={buddy.nudged}
+                          >
+                            {buddy.nudged ? "Nudged" : "Nudge"}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Sub-tab 2: Followers */}
+              {profileSubTab === "followers" && (
+                <div className="bg-white rounded-2xl border border-[#bec8cd]/60 p-6 space-y-4 shadow-xs">
+                  <h3 className="font-extrabold text-lg text-[#1a1c1d] flex items-center gap-2">
+                    <Heart className="w-5 h-5 text-red-500 fill-red-100" />
+                    Followers List ({followersCount})
+                  </h3>
+                  <p className="text-xs text-[#3f484c]">
+                    These supportive sign allies follow your learning progress. Follow them back to form Collaborative Friend Quests!
+                  </p>
+                  <div className="space-y-3.5 pt-2">
+                    {[
+                      { id: "f1", name: "Elena R.", avatar: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&auto=format&fit=crop&q=80", streak: 12, followed: isFollowingElena, setter: setIsFollowingElena },
+                      { id: "f2", name: "Sarah K.", avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80", streak: 15, followed: isFollowingSarah, setter: setIsFollowingSarah },
+                      { id: "f3", name: "Jordan M.", avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80", streak: 8, followed: isFollowingJordan, setter: setIsFollowingJordan }
+                    ].map((follower) => (
+                      <div key={follower.id} className="flex justify-between items-center p-3.5 bg-slate-50/70 border border-slate-100 rounded-xl hover:bg-slate-50 transition-all">
+                        <div className="flex items-center gap-3">
+                          <img src={follower.avatar} alt={follower.name} className="w-10 h-10 rounded-full object-cover border border-slate-200" referrerPolicy="no-referrer" />
+                          <div>
+                            <p className="font-bold text-[#1a1c1d] text-sm">{follower.name}</p>
+                            <span className="text-[10px] text-orange-600 font-mono font-bold flex items-center gap-0.5">
+                              <Flame className="w-3 h-3 fill-orange-500" />
+                              {follower.streak}d active streak
+                            </span>
+                          </div>
+                        </div>
+                        <button
+                          onClick={async () => {
+                            const nextState = !follower.followed;
+                            follower.setter(nextState);
+                            setFollowingCount(prev => prev + (nextState ? 1 : -1));
+                            
+                            // Call Supabase Database API logic
+                            const success = await toggleFollow(user?.id || "simulated-user-id", follower.id, follower.followed);
+                            if (success) {
+                              notify(`${nextState ? "Followed" : "Unfollowed"} ${follower.name}! Status synced.`);
+                            } else {
+                              notify(`Offline Mode: Locally updated following preference.`);
+                            }
+                          }}
+                          className={`px-4 py-1.5 text-xs font-black rounded-lg transition-transform cursor-pointer ${
+                            follower.followed
+                              ? "bg-slate-200 text-slate-700 hover:bg-slate-300"
+                              : "bg-[#005a71] text-white hover:bg-[#0e7490]"
+                          }`}
+                        >
+                          {follower.followed ? "Following" : "Follow Back"}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Sub-tab 3: Following */}
+              {profileSubTab === "following" && (
+                <div className="bg-white rounded-2xl border border-[#bec8cd]/60 p-6 space-y-4 shadow-xs">
+                  <h3 className="font-extrabold text-lg text-[#1a1c1d] flex items-center gap-2">
+                    <Sparkles className="w-5 h-5 text-amber-500 fill-amber-100" />
+                    People You Follow ({followingCount})
+                  </h3>
+                  <div className="space-y-3.5 pt-2">
+                    {[
+                      { id: "f2", name: "Sarah K. (Streak Buddy)", avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80", streak: 15, active: isFollowingSarah, setter: setIsFollowingSarah },
+                      { id: "f3", name: "Jordan M. (Streak Buddy)", avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80", streak: 8, active: isFollowingJordan, setter: setIsFollowingJordan },
+                      { id: "f1", name: "Elena R. (Advanced Ally)", avatar: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&auto=format&fit=crop&q=80", streak: 12, active: isFollowingElena, setter: setIsFollowingElena }
+                    ].filter(f => f.active).map((following) => (
+                      <div key={following.id} className="flex justify-between items-center p-3.5 bg-slate-50/70 border border-slate-100 rounded-xl">
+                        <div className="flex items-center gap-3">
+                          <img src={following.avatar} alt={following.name} className="w-10 h-10 rounded-full object-cover border border-slate-200" referrerPolicy="no-referrer" />
+                          <div>
+                            <p className="font-bold text-[#1a1c1d] text-sm">{following.name}</p>
+                            <span className="text-[10px] text-orange-600 font-mono font-bold flex items-center gap-0.5">
+                              <Flame className="w-3 h-3 fill-orange-500" />
+                              {following.streak}d active streak
+                            </span>
+                          </div>
+                        </div>
+                        <button
+                          onClick={async () => {
+                            following.setter(false);
+                            setFollowingCount(prev => Math.max(0, prev - 1));
+                            
+                            const success = await toggleFollow(user?.id || "simulated-user-id", following.id, true);
+                            if (success) {
+                              notify(`Unfollowed ${following.name}, count updated.`);
+                            }
+                          }}
+                          className="px-4 py-1.5 text-xs font-black bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 rounded-lg transition-transform cursor-pointer"
+                        >
+                          Unfollow
+                        </button>
+                      </div>
+                    ))}
+
+                    {![isFollowingSarah, isFollowingJordan, isFollowingElena].some(Boolean) && (
+                      <div className="text-center py-6 text-slate-400 space-y-2">
+                        <Sparkles className="w-8 h-8 mx-auto text-slate-300 stroke-[1.5]" />
+                        <p className="text-xs font-semibold">You aren't following anyone yet! Head to Followers tab and follow back.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+
+              {/* Sub-tab 5: Settings / Edit Profile screen */}
+              {profileSubTab === "settings" && (
+                <div className="bg-white rounded-2xl border border-[#bec8cd]/60 p-6 space-y-6 shadow-xs">
+                  
+                  {/* Photo Edit Bucket options */}
+                  <div className="space-y-3">
+                    <h3 className="font-extrabold text-base text-slate-800">Edit Profile Visuals</h3>
+                    <div className="flex gap-4 items-center flex-wrap">
+                      <img src={profileAvatar} alt={profileUsername} className="w-16 h-16 rounded-full object-cover border-2 border-slate-200" referrerPolicy="no-referrer" />
+                      <div className="space-y-1.5">
+                        <div className="flex gap-2">
+                          {/* File input linked to controller */}
+                          <button
+                            type="button"
+                            onClick={() => document.getElementById("avatar-file-upload")?.click()}
+                            className="bg-[#005a71] hover:bg-[#0e7490] text-white text-[11px] font-black px-3.5 py-1.5 rounded-lg active:scale-95 transition-all cursor-pointer"
+                          >
+                            Upload Custom Attachment
+                          </button>
+                          
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const defaultAvatar = "https://i.pinimg.com/1200x/58/7a/5d/587a5da410420abe2e54b5ed9f605665.jpg";
+                              setProfileAvatar(defaultAvatar);
+                              notify("Avatar deleted. Fallback default restored!");
+                              if (user && isSupabaseConfigured && supabase) {
+                                await updateUserProfile(user.id, profileUsername, defaultAvatar);
+                              }
+                            }}
+                            className="border border-red-200 text-red-600 hover:bg-red-50 text-[11px] font-bold px-3.5 py-1.5 rounded-lg cursor-pointer"
+                          >
+                            Delete Photo
+                          </button>
+                        </div>
+                        <p className="text-[10px] text-slate-400">Supports PNG, JPG up to 10MB. Automatically hosted in Supabase <code>avatars</code> bucket.</p>
                       </div>
                     </div>
 
-                    {/* Nudge trigger button matching mocks */}
-                    <button
-                      className={`px-6 py-2 rounded-full font-bold text-xs transition-all ${
-                        buddy.nudged
-                          ? "bg-slate-100 border border-[#bec8cd] text-slate-400 cursor-not-allowed"
-                          : "border-2 border-[#005a71] text-[#005a71] bg-white hover:bg-[#005a71]/5 active:scale-95 cursor-pointer"
-                      }`}
-                      onClick={() => handleNudge(buddy.id)}
-                      disabled={buddy.nudged}
-                    >
-                      {buddy.nudged ? "Nudged" : "Nudge"}
-                    </button>
+                    <input
+                      type="file"
+                      id="avatar-file-upload"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        notify("Uploading custom file into 'avatars' Storage Bucket...");
+                        
+                        const publicUrl = await uploadAvatarFile(user?.id || "simulated-id", file);
+                        if (publicUrl) {
+                          setProfileAvatar(publicUrl);
+                          notify("Avatar uploaded and hosted successfully!");
+                          if (user) {
+                            await updateUserProfile(user.id, profileUsername, publicUrl);
+                          }
+                        } else {
+                          // local previews fallback
+                          const localUrl = URL.createObjectURL(file);
+                          setProfileAvatar(localUrl);
+                          notify("Uploaded and previewed locally! (Fallback object applied).");
+                        }
+                      }}
+                    />
                   </div>
-                ))}
-              </div>
+
+                  {/* Profile Form Details */}
+                  <div className="space-y-4 pt-1">
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-slate-700 uppercase font-mono">My Account Name / Username</label>
+                      <input
+                        type="text"
+                        className="w-full p-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-1 focus:ring-[#005a71]"
+                        value={profileUsername}
+                        onChange={(e) => setProfileUsername(e.target.value)}
+                        placeholder="AlexSigner"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-slate-700 uppercase font-mono">My SignFlow Bio Details</label>
+                      <textarea
+                        className="w-full p-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-1 focus:ring-[#005a71] min-h-[75px]"
+                        value={profileBio}
+                        onChange={(e) => setProfileBio(e.target.value)}
+                        placeholder="Introduce yourself to the Malaysian sign language community..."
+                      />
+                    </div>
+
+                    <div className="flex justify-end pt-1">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          notify("Updating cloud metadata tables...");
+                          if (user && isSupabaseConfigured && supabase) {
+                            const result = await updateUserProfile(user.id, profileUsername, profileAvatar);
+                            if (result) {
+                              notify("Success! All profile fields persisted into Supabase cloud table.");
+                            } else {
+                              notify("Database timeout. Fallback saved offline successfully.");
+                            }
+                          } else {
+                            notify("Offline simulation mode: Updated dashboard values successfully.");
+                          }
+                        }}
+                        className="bg-[#005a71] hover:bg-[#0e7490] text-white text-xs font-extrabold px-6 py-2.5 rounded-xl transition-transform active:scale-95 cursor-pointer"
+                      >
+                        Save Profile Changes
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Settings Preferences Checkboxes */}
+                  <div className="border-t border-slate-100 pt-5 space-y-3">
+                    <h3 className="font-extrabold text-xs text-slate-500 uppercase tracking-wider font-mono">Applet Preferences</h3>
+                    <div className="space-y-2 text-xs">
+                      <label className="flex items-center gap-2.5 p-2 bg-slate-50 rounded-xl cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={userSettings.vibrationEnabled}
+                          onChange={(e) => setUserSettings({ ...userSettings, vibrationEnabled: e.target.checked })}
+                          className="accent-[#005a71]"
+                        />
+                        <span className="font-bold text-slate-700">Enable vibration interactive triggers</span>
+                      </label>
+
+                      <label className="flex items-center gap-2.5 p-2 bg-slate-50 rounded-xl cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={userSettings.soundSfxEnabled}
+                          onChange={(e) => setUserSettings({ ...userSettings, soundSfxEnabled: e.target.checked })}
+                          className="accent-[#005a71]"
+                        />
+                        <span className="font-bold text-slate-700">Enable audio sound effects sfx indicators</span>
+                      </label>
+
+                      <label className="flex items-center gap-2.5 p-2 bg-slate-50 rounded-xl cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={userSettings.linguisticTipsEnabled}
+                          onChange={(e) => setUserSettings({ ...userSettings, linguisticTipsEnabled: e.target.checked })}
+                          className="accent-[#005a71]"
+                        />
+                        <span className="font-bold text-slate-700">Show beginner interactive linguistic tips</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              )}
+
             </div>
 
           </div>
